@@ -14,13 +14,15 @@
     "@nestjs/common": "^10.3.10",
     "@nestjs/core": "^10.3.10",
     "@nestjs/platform-express": "^10.3.10",
-    "better-sqlite3": "^9.4.3",
+    "dotenv": "^16.4.5",
+    "pg": "^8.11.5",
+    "pg-mem": "^3.0.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
-    "@types/better-sqlite3": "^7.6.10",
+    "@types/pg": "^8.11.6",
     "@typescript-eslint/eslint-plugin": "^8.0.1",
     "@typescript-eslint/parser": "^8.0.1",
     "eslint": "^9.5.0",

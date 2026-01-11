@@ -1,72 +1,29 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import 'dotenv/config';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
 import { Module } from '@nestjs/common';
-import type { ProjectSummary, TemplateSummary } from '../projects/projects.types.js';
+import { Pool } from 'pg';
+import type { ProjectSummary } from '../projects/projects.types.js';
 
 export const DATABASE = 'DATABASE_CONNECTION';
 
-function ensureDataFolder(dataDir: string) {
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-  }
-}
+type PgPool = Pool;
 
-function seedFromJson(db: Database.Database, dataDir: string) {
-  const seedPath = join(dataDir, 'projects.json');
-  if (!existsSync(seedPath)) {
-    return;
-  }
+function createPool(): PgPool {
+  const sslEnabled = process.env.PG_SSL === 'true';
 
-  const projectCount = db.prepare('SELECT COUNT(*) as count FROM projects').get() as { count: number };
-  if (projectCount.count > 0) {
-    return;
-  }
-
-  const raw = readFileSync(seedPath, 'utf-8');
-  const projects = JSON.parse(raw) as ProjectSummary[];
-
-  const projectStmt = db.prepare(
-    `INSERT INTO projects (id, name, owner, status, updated_at) VALUES (@id, @name, @owner, @status, @updatedAt)`
-  );
-  const templateStmt = db.prepare(
-    `INSERT INTO templates (id, project_id, name, version, status, updated_at)
-     VALUES (@id, @projectId, @name, @version, @status, @updatedAt)`
-  );
-
-  const insert = db.transaction(() => {
-    for (const project of projects) {
-      projectStmt.run({
-        id: project.id,
-        name: project.name,
-        owner: project.owner,
-        status: project.status,
-        updatedAt: project.updatedAt
-      });
-      for (const template of project.templates) {
-        templateStmt.run({
-          id: template.id,
-          projectId: project.id,
-          name: template.name,
-          version: template.version,
-          status: template.status,
-          updatedAt: template.updatedAt
-        });
-      }
-    }
+  return new Pool({
+    host: process.env.PG_HOST ?? 'localhost',
+    port: Number(process.env.PG_PORT ?? 5432),
+    database: process.env.PG_DATABASE ?? 'newsletter',
+    user: process.env.PG_USER ?? 'newsletter',
+    password: process.env.PG_PASSWORD ?? 'newsletter',
+    ssl: sslEnabled ? { rejectUnauthorized: false } : undefined
   });
-
-  insert();
 }
 
-function initializeDatabase(): Database.Database {
-  const dataDir = join(process.cwd(), 'data');
-  ensureDataFolder(dataDir);
-  const dbPath = join(dataDir, 'newsletter.db');
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-
-  db.exec(`
+async function ensureSchema(pool: PgPool) {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -76,28 +33,75 @@ function initializeDatabase(): Database.Database {
     );
   `);
 
-  db.exec(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS templates (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       version TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'draft',
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+      updated_at TEXT NOT NULL
     );
   `);
+}
 
-  seedFromJson(db, dataDir);
+async function seedFromJson(pool: PgPool) {
+  const dataDir = join(process.cwd(), 'data');
+  const seedPath = join(dataDir, 'projects.json');
+  if (!existsSync(seedPath)) {
+    return;
+  }
 
-  return db;
+  const { rows } = await pool.query<{ count: string }>('SELECT COUNT(*)::text as count FROM projects');
+  if (Number(rows[0]?.count ?? 0) > 0) {
+    return;
+  }
+
+  const payload = JSON.parse(readFileSync(seedPath, 'utf-8')) as ProjectSummary[];
+
+  await pool.query('BEGIN');
+  try {
+    for (const project of payload) {
+      await pool.query(
+        `INSERT INTO projects (id, name, owner, status, updated_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO NOTHING`,
+        [project.id, project.name, project.owner, project.status, project.updatedAt ?? new Date().toISOString()]
+      );
+
+      for (const template of project.templates) {
+        await pool.query(
+          `INSERT INTO templates (id, project_id, name, version, status, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            template.id,
+            project.id,
+            template.name,
+            template.version,
+            template.status,
+            template.updatedAt ?? new Date().toISOString()
+          ]
+        );
+      }
+    }
+    await pool.query('COMMIT');
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    throw error;
+  }
 }
 
 @Module({
   providers: [
     {
       provide: DATABASE,
-      useFactory: () => initializeDatabase()
+      useFactory: async () => {
+        const pool = createPool();
+        await ensureSchema(pool);
+        await seedFromJson(pool);
+        return pool;
+      }
     }
   ],
   exports: [DATABASE]

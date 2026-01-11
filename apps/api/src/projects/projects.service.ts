@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type Database from 'better-sqlite3';
+import type { Pool } from 'pg';
 import { DATABASE } from '../database/database.module.js';
 import {
   type ProjectSummary,
@@ -30,21 +30,22 @@ interface TemplateRow {
 
 @Injectable()
 export class ProjectsService {
-  constructor(@Inject(DATABASE) private readonly db: Database.Database) {}
+  constructor(@Inject(DATABASE) private readonly db: Pool) {}
 
-  findAll(): ProjectSummary[] {
-    const rows = this.db
-      .prepare<ProjectRow>('SELECT id, name, owner, status, updated_at FROM projects ORDER BY datetime(updated_at) DESC')
-      .all();
-
-    return rows.map((row) => this.hydrateProject(row));
+  async findAll(): Promise<ProjectSummary[]> {
+    const { rows } = await this.db.query<ProjectRow>(
+      'SELECT id, name, owner, status, updated_at FROM projects ORDER BY updated_at DESC'
+    );
+    return Promise.all(rows.map((row) => this.hydrateProject(row)));
   }
 
-  findOne(projectId: string): ProjectSummary {
-    const row = this.db
-      .prepare<ProjectRow>('SELECT id, name, owner, status, updated_at FROM projects WHERE id = ?')
-      .get(projectId);
+  async findOne(projectId: string): Promise<ProjectSummary> {
+    const { rows } = await this.db.query<ProjectRow>(
+      'SELECT id, name, owner, status, updated_at FROM projects WHERE id = $1',
+      [projectId]
+    );
 
+    const row = rows[0];
     if (!row) {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
@@ -52,126 +53,103 @@ export class ProjectsService {
     return this.hydrateProject(row);
   }
 
-  createProject(payload: CreateProjectInput): ProjectSummary {
+  async createProject(payload: CreateProjectInput): Promise<ProjectSummary> {
     const id = `proj_${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
     const status = payload.status ?? 'active';
 
-    this.db
-      .prepare(
-        `INSERT INTO projects (id, name, owner, status, updated_at)
-         VALUES (@id, @name, @owner, @status, @updatedAt)`
-      )
-      .run({
-        id,
-        name: payload.name,
-        owner: payload.owner,
-        status,
-        updatedAt: now
-      });
+    await this.db.query(
+      `INSERT INTO projects (id, name, owner, status, updated_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, payload.name, payload.owner, status, now]
+    );
 
     return this.findOne(id);
   }
 
-  updateProject(projectId: string, payload: UpdateProjectInput): ProjectSummary {
-    const existing = this.db
-      .prepare<ProjectRow>('SELECT id, name, owner, status, updated_at FROM projects WHERE id = ?')
-      .get(projectId);
-
-    if (!existing) {
-      throw new NotFoundException(`Project ${projectId} not found`);
-    }
-
+  async updateProject(projectId: string, payload: UpdateProjectInput): Promise<ProjectSummary> {
+    const project = await this.findOne(projectId);
     const updatedAt = new Date().toISOString();
-    const next = {
-      id: projectId,
-      name: payload.name ?? existing.name,
-      owner: payload.owner ?? existing.owner,
-      status: payload.status ?? existing.status,
-      updatedAt
-    };
 
-    this.db
-      .prepare('UPDATE projects SET name=@name, owner=@owner, status=@status, updated_at=@updatedAt WHERE id=@id')
-      .run(next);
+    await this.db.query(
+      `UPDATE projects
+       SET name = $1, owner = $2, status = $3, updated_at = $4
+       WHERE id = $5`,
+      [
+        payload.name ?? project.name,
+        payload.owner ?? project.owner,
+        payload.status ?? project.status,
+        updatedAt,
+        projectId
+      ]
+    );
 
     return this.findOne(projectId);
   }
 
-  deleteProject(projectId: string) {
-    const result = this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
-    if (!result.changes) {
+  async deleteProject(projectId: string) {
+    const result = await this.db.query('DELETE FROM projects WHERE id = $1', [projectId]);
+    if (result.rowCount === 0) {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
     return { deleted: true };
   }
 
-  addTemplate(projectId: string, payload: CreateTemplateInput): TemplateSummary {
-    this.ensureProjectExists(projectId);
+  async addTemplate(projectId: string, payload: CreateTemplateInput): Promise<TemplateSummary> {
+    await this.ensureProjectExists(projectId);
     const id = `tmpl_${randomUUID().slice(0, 8)}`;
     const now = new Date().toISOString();
 
-    this.db
-      .prepare(
-        `INSERT INTO templates (id, project_id, name, version, status, updated_at)
-         VALUES (@id, @projectId, @name, @version, @status, @updatedAt)`
-      )
-      .run({
-        id,
-        projectId,
-        name: payload.name,
-        version: payload.version ?? '0.1.0',
-        status: payload.status ?? 'draft',
-        updatedAt: now
-      });
+    await this.db.query(
+      `INSERT INTO templates (id, project_id, name, version, status, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, projectId, payload.name, payload.version ?? '0.1.0', payload.status ?? 'draft', now]
+    );
 
-    this.touchProject(projectId);
+    await this.touchProject(projectId);
 
     return this.getTemplate(projectId, id);
   }
 
-  updateTemplate(projectId: string, templateId: string, payload: UpdateTemplateInput): TemplateSummary {
-    this.ensureProjectExists(projectId);
-    const existing = this.db
-      .prepare<TemplateRow>('SELECT id, project_id, name, version, status, updated_at FROM templates WHERE id = ?')
-      .get(templateId);
-
-    if (!existing || existing.project_id !== projectId) {
-      throw new NotFoundException(`Template ${templateId} not found in project ${projectId}`);
-    }
-
+  async updateTemplate(projectId: string, templateId: string, payload: UpdateTemplateInput): Promise<TemplateSummary> {
+    await this.ensureProjectExists(projectId);
+    const template = await this.getTemplate(projectId, templateId);
     const updatedAt = new Date().toISOString();
-    const next = {
-      id: templateId,
-      name: payload.name ?? existing.name,
-      version: payload.version ?? existing.version,
-      status: payload.status ?? existing.status,
-      updatedAt
-    };
 
-    this.db
-      .prepare(
-        'UPDATE templates SET name=@name, version=@version, status=@status, updated_at=@updatedAt WHERE id=@id'
-      )
-      .run(next);
+    await this.db.query(
+      `UPDATE templates
+       SET name = $1, version = $2, status = $3, updated_at = $4
+       WHERE id = $5 AND project_id = $6`,
+      [
+        payload.name ?? template.name,
+        payload.version ?? template.version,
+        payload.status ?? template.status,
+        updatedAt,
+        templateId,
+        projectId
+      ]
+    );
 
-    this.touchProject(projectId);
+    await this.touchProject(projectId);
 
     return this.getTemplate(projectId, templateId);
   }
 
-  deleteTemplate(projectId: string, templateId: string) {
-    this.ensureProjectExists(projectId);
-    const result = this.db.prepare('DELETE FROM templates WHERE id = ? AND project_id = ?').run(templateId, projectId);
-    if (!result.changes) {
+  async deleteTemplate(projectId: string, templateId: string) {
+    await this.ensureProjectExists(projectId);
+    const result = await this.db.query('DELETE FROM templates WHERE id = $1 AND project_id = $2', [
+      templateId,
+      projectId
+    ]);
+    if (result.rowCount === 0) {
       throw new NotFoundException(`Template ${templateId} not found in project ${projectId}`);
     }
-    this.touchProject(projectId);
+    await this.touchProject(projectId);
     return { deleted: true };
   }
 
-  private hydrateProject(row: ProjectRow): ProjectSummary {
-    const templates = this.getTemplates(row.id);
+  private async hydrateProject(row: ProjectRow): Promise<ProjectSummary> {
+    const templates = await this.getTemplates(row.id);
     return {
       id: row.id,
       name: row.name,
@@ -183,23 +161,27 @@ export class ProjectsService {
     };
   }
 
-  private getTemplates(projectId: string): TemplateSummary[] {
-    const rows = this.db
-      .prepare<TemplateRow>(
-        'SELECT id, project_id, name, version, status, updated_at FROM templates WHERE project_id = ? ORDER BY datetime(updated_at) DESC'
-      )
-      .all(projectId);
+  private async getTemplates(projectId: string): Promise<TemplateSummary[]> {
+    const { rows } = await this.db.query<TemplateRow>(
+      `SELECT id, project_id, name, version, status, updated_at
+       FROM templates
+       WHERE project_id = $1
+       ORDER BY updated_at DESC`,
+      [projectId]
+    );
 
     return rows.map((row) => this.mapTemplate(row));
   }
 
-  private getTemplate(projectId: string, templateId: string): TemplateSummary {
-    const row = this.db
-      .prepare<TemplateRow>(
-        'SELECT id, project_id, name, version, status, updated_at FROM templates WHERE id = ? AND project_id = ?'
-      )
-      .get(templateId, projectId);
+  private async getTemplate(projectId: string, templateId: string): Promise<TemplateSummary> {
+    const { rows } = await this.db.query<TemplateRow>(
+      `SELECT id, project_id, name, version, status, updated_at
+       FROM templates
+       WHERE id = $1 AND project_id = $2`,
+      [templateId, projectId]
+    );
 
+    const row = rows[0];
     if (!row) {
       throw new NotFoundException(`Template ${templateId} not found in project ${projectId}`);
     }
@@ -217,15 +199,15 @@ export class ProjectsService {
     };
   }
 
-  private ensureProjectExists(projectId: string) {
-    const exists = this.db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId);
-    if (!exists) {
+  private async ensureProjectExists(projectId: string) {
+    const { rowCount } = await this.db.query('SELECT 1 FROM projects WHERE id = $1', [projectId]);
+    if (rowCount === 0) {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
   }
 
-  private touchProject(projectId: string) {
+  private async touchProject(projectId: string) {
     const updatedAt = new Date().toISOString();
-    this.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(updatedAt, projectId);
+    await this.db.query('UPDATE projects SET updated_at = $1 WHERE id = $2', [updatedAt, projectId]);
   }
 }

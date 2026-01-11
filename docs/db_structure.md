@@ -2,8 +2,8 @@
 
 _Last updated: January 11, 2026_
 
-## Phase 1 Persistence (SQLite)
-For the current milestone we migrated from JSON files to a lightweight SQLite database (`data/newsletter.db`) managed by the NestJS API via `better-sqlite3`. This file is created automatically on bootstrap and seeded from `data/projects.json` when empty.
+## Phase 2 Persistence (PostgreSQL)
+The API now uses PostgreSQL for persistence, provisioned via Docker (`docker-compose.yml`) and accessed through the `pg` driver. Connection settings live in `apps/api/.env` (see `.env.example`). On bootstrap the API ensures the schema exists and seeds from `data/projects.json` when the database is empty.
 
 ### Tables
 | Table | Columns | Notes |
@@ -32,20 +32,18 @@ CREATE TABLE IF NOT EXISTS templates (
 ```
 
 ### Access Layer
-- `ProjectsService` uses prepared statements and transactions for CRUD operations.
+- `ProjectsService` uses the shared `pg.Pool` for CRUD operations with parameterized queries.
 - IDs follow `proj_<slug>` / `tmpl_<slug>` derived from `randomUUID()`.
 - Timestamp management: every mutation updates the parent `projects.updated_at` (“touch”) to keep ordering deterministic.
 
 ### Seed Data
-- On first boot the service reads `data/projects.json` and inserts rows into both tables.
+- On first boot the service reads `data/projects.json` and inserts rows into both tables inside a transaction.
 - Subsequent boots skip seeding if `projects` already contains data, preserving existing records.
 
-### Future Migration Plan
-- The SQLite schema mirrors the eventual PostgreSQL layout, easing migration by keeping column names/types consistent.
-- To upgrade:
-  1. Generate a proper migration (Prisma/Knex/dbmate) against PostgreSQL.
-  2. Export data from `newsletter.db` (e.g., `.dump` or SELECT) and import into PostgreSQL.
-  3. Point the NestJS provider to the new connection pool and deprecate the file-based adapter.
+### Local Operations
+- Use `docker compose up postgres -d` to start the database.
+- Apply env overrides via `apps/api/.env`.
+- Tests rely on `pg-mem` (`createTestPool`) to keep suites isolated without mutating the running container.
 
 ## Interaction Diagram
 1. React app issues CRUD requests via `/api/projects` and nested template endpoints.
@@ -54,5 +52,5 @@ CREATE TABLE IF NOT EXISTS templates (
 4. React Query invalidates the `projects` cache to refresh UI state.
 
 ## Backups & Local Reset
-- Since SQLite is file-based, developers can snapshot `data/newsletter.db` or delete it to re-seed from JSON.
-- For CI, we rely on the in-memory helper (`createInMemoryDatabase`) used in Vitest to isolate tests without touching real data.
+- Snapshot the `postgres_data` Docker volume or drop/recreate the database with `docker compose down -v && docker compose up`.
+- For CI, we rely on the in-memory helper (`createTestPool`) built with `pg-mem` to isolate tests without touching real data.

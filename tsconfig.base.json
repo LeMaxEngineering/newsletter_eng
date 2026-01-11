@@ -11,6 +11,7 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
       "@neewsletter/ui-kit": ["packages/ui-kit/src/index.ts"],
@@ -19,6 +20,6 @@
       "@neewsletter/config/*": ["packages/config/*"]
     }
   },
-  "include": ["apps", "packages", "services"],
+  "include": ["apps", "packages", "services", "tests", "playwright.config.ts"],
   "exclude": ["node_modules", "dist"]
 }
