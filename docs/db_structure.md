@@ -1,52 +1,58 @@
 # Database & Data Model Structure
 
-The platform uses PostgreSQL for transactional data and a warehouse (BigQuery/Snowflake) for analytics. Below are the primary relational entities, relationships, and supporting warehouse models.
+_Last updated: January 11, 2026_
 
-## Core Relational Tables (PostgreSQL)
-| Table | Key Fields | Description |
+## Phase 1 Persistence (SQLite)
+For the current milestone we migrated from JSON files to a lightweight SQLite database (`data/newsletter.db`) managed by the NestJS API via `better-sqlite3`. This file is created automatically on bootstrap and seeded from `data/projects.json` when empty.
+
+### Tables
+| Table | Columns | Notes |
 | --- | --- | --- |
-| `tenants` | `id`, `name`, `plan`, `billing_status`, `created_at` | SaaS tenants/customers; drives billing tiers and limits. |
-| `users` | `id`, `tenant_id`, `email`, `role`, `status`, `mfa_config` | Collaborators within tenants; ties into RBAC. |
-| `projects` | `id`, `tenant_id`, `name`, `status`, `default_locale` | Logical grouping for newsletter campaigns/templates. |
-| `templates` | `id`, `project_id`, `version`, `block_tree` (JSONB), `is_published` | Stores block schema definitions with versioning. |
-| `personalization_rules` | `id`, `project_id`, `segment_id`, `target_block_ids`, `conditions` (JSONB) | Controls which blocks render per segment. |
-| `campaigns` | `id`, `project_id`, `template_id`, `esp_id`, `send_window`, `status` | Outbound sends referencing templates and ESP accounts. |
-| `esp_accounts` | `id`, `tenant_id`, `provider`, `oauth_meta`, `status` | OAuth credentials + metadata per ESP integration. |
-| `render_jobs` | `id`, `campaign_id`, `status`, `render_type`, `output_hash`, `created_at`, `completed_at` | Tracks AMP/HTML rendering tasks and cache keys. |
-| `events_interactions` | `id`, `campaign_id`, `subscriber_id`, `block_id`, `event_type`, `payload`, `occurred_at` | Raw interaction events (ingested first in Kafka, persisted for audit/BI). |
-| `subscribers` | `id`, `tenant_id`, `email`, `locale`, `attributes` (JSONB), `consent_state` | Subscriber profiles + consent metadata. |
-| `segments` | `id`, `tenant_id`, `name`, `definition` (JSONB) | Dynamic audience definitions used by personalization rules. |
-| `webhooks` | `id`, `tenant_id`, `url`, `event_types`, `secret`, `is_active` | Outbound automation triggers to third-party systems. |
-| `audit_logs` | `id`, `tenant_id`, `actor_id`, `action`, `target`, `metadata`, `created_at` | Compliance logging for key actions (RBAC governance). |
+| `projects` | `id` (TEXT, PK), `name`, `owner`, `status` (`active`/`archived`), `updated_at` (ISO string) | Represents a workspace. `status` drives UI badges. |
+| `templates` | `id` (TEXT, PK), `project_id` (FK), `name`, `version`, `status` (`draft`/`published`), `updated_at` | Child templates scoped to a project. FK cascade deletes templates when a project is removed. |
 
-### Relationships
-- `tenants` 1..n `users`, `projects`, `esp_accounts`, `subscribers`, `segments`.
-- `projects` 1..n `templates`, `campaigns`, `personalization_rules`.
-- `campaigns` reference `templates`, `esp_accounts`, and enqueue `render_jobs`.
-- `events_interactions` reference `campaigns` + `subscribers` (+ optional `block_id` for granular analytics).
+#### Schema DDL (apps/api/src/database/database.module.ts)
+```sql
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  updated_at TEXT NOT NULL
+);
 
-### Indexing & Performance
-- B-tree indexes on foreign keys (`*_id`) and frequently filtered fields (`campaign_id`, `occurred_at`, `tenant_id`).
-- GIN indexes on JSONB columns (`block_tree`, `conditions`, `attributes`) for targeted queries.
-- Partition `events_interactions` by month to keep insert/query performance stable.
+CREATE TABLE IF NOT EXISTS templates (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  updated_at TEXT NOT NULL
+);
+```
 
-## Warehouse Models (dbt)
-| Model | Source | Purpose |
-| --- | --- | --- |
-| `stg_events_interactions` | Kafka → landing tables | Captures raw events for validation. |
-| `fct_engagements` | `events_interactions`, `campaigns`, `templates` | Fact table aggregating interactions per block, device, locale. |
-| `dim_campaigns` | `campaigns`, `projects`, `tenants` | Dimension for campaign metadata and hierarchy. |
-| `dim_subscribers` | `subscribers`, `segments` | Subscriber attributes, consent states, segment membership snapshots. |
-| `agg_block_performance` | Derived from `fct_engagements` | Materialized view powering analytics heatmaps and alerts. |
-| `agg_tenant_health` | Mix of facts/dims | KPIs per tenant (CTR uplift, deliverability, latency). |
+### Access Layer
+- `ProjectsService` uses prepared statements and transactions for CRUD operations.
+- IDs follow `proj_<slug>` / `tmpl_<slug>` derived from `randomUUID()`.
+- Timestamp management: every mutation updates the parent `projects.updated_at` (“touch”) to keep ordering deterministic.
 
-## Data Flow Summary
-1. **Creation Time:** Templates/block schemas stored in PostgreSQL (`templates.block_tree`).
-2. **Rendering:** Renderer pulls template + personalization rules, writes `render_jobs` status, caches outputs in Redis.
-3. **Send/Engagement:** Interaction events captured via ingestion service → Kafka → persisted to `events_interactions` and replicated to warehouse.
-4. **Analytics:** dbt transforms feed dashboards + alerting services; `agg_block_performance` drives editor-side insights.
+### Seed Data
+- On first boot the service reads `data/projects.json` and inserts rows into both tables.
+- Subsequent boots skip seeding if `projects` already contains data, preserving existing records.
 
-## Compliance & Governance
-- Subscriber consent tracked in `subscribers.consent_state` with `audit_logs` capturing updates (for GDPR/CCPA).
-- DSR (data subject request) workflows rely on foreign-key cascades and soft-delete flags (not shown) to ensure traceability.
-- PII encryption at rest enforced via PostgreSQL column-level encryption or application-layer secrets management.
+### Future Migration Plan
+- The SQLite schema mirrors the eventual PostgreSQL layout, easing migration by keeping column names/types consistent.
+- To upgrade:
+  1. Generate a proper migration (Prisma/Knex/dbmate) against PostgreSQL.
+  2. Export data from `newsletter.db` (e.g., `.dump` or SELECT) and import into PostgreSQL.
+  3. Point the NestJS provider to the new connection pool and deprecate the file-based adapter.
+
+## Interaction Diagram
+1. React app issues CRUD requests via `/api/projects` and nested template endpoints.
+2. API RolesGuard authorizes based on `x-user-roles` header.
+3. ProjectsService persists changes to SQLite and returns hydrated project objects (with embedded templates + counts).
+4. React Query invalidates the `projects` cache to refresh UI state.
+
+## Backups & Local Reset
+- Since SQLite is file-based, developers can snapshot `data/newsletter.db` or delete it to re-seed from JSON.
+- For CI, we rely on the in-memory helper (`createInMemoryDatabase`) used in Vitest to isolate tests without touching real data.

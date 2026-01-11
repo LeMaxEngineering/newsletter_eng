@@ -5,14 +5,28 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { ProjectsController } from './projects/projects.controller.js';
+import { ProjectsService } from './projects/projects.service.js';
+import { AuthController } from './auth/auth.controller.js';
+import { AuthService } from './auth/auth.service.js';
+import { RolesGuard } from './auth/roles.guard.js';
 let AppModule = class AppModule {
 };
 AppModule = __decorate([
     Module({
-        controllers: [AppController],
-        providers: [AppService]
+        controllers: [AppController, ProjectsController, AuthController],
+        providers: [
+            AppService,
+            ProjectsService,
+            AuthService,
+            {
+                provide: APP_GUARD,
+                useClass: RolesGuard
+            }
+        ]
     })
 ], AppModule);
 export { AppModule };

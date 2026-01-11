@@ -1,0 +1,43 @@
+[
+  {
+    "id": "proj_001",
+    "name": "Interactive Welcome Series",
+    "owner": "Alicia Navarro",
+    "status": "active",
+    "templateCount": 4,
+    "updatedAt": "2026-01-10T22:00:00.000Z",
+    "templates": [
+      {
+        "id": "tmpl_hero",
+        "name": "Hero + Poll",
+        "version": "1.3.2",
+        "status": "published",
+        "updatedAt": "2026-01-10T22:00:00.000Z"
+      },
+      {
+        "id": "tmpl_engage",
+        "name": "Engagement Digest",
+        "version": "0.9.0",
+        "status": "draft",
+        "updatedAt": "2026-01-10T22:00:00.000Z"
+      }
+    ]
+  },
+  {
+    "id": "proj_002",
+    "name": "Product Launch Countdown",
+    "owner": "Devon Kim",
+    "status": "active",
+    "templateCount": 2,
+    "updatedAt": "2026-01-10T22:00:00.000Z",
+    "templates": [
+      {
+        "id": "tmpl_launch",
+        "name": "Launch Day Blast",
+        "version": "1.0.0",
+        "status": "draft",
+        "updatedAt": "2026-01-10T22:00:00.000Z"
+      }
+    ]
+  }
+]

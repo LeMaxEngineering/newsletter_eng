@@ -13,6 +13,7 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@neewsletter/ui-kit": ["packages/ui-kit/src/index.ts"],
       "@neewsletter/ui-kit/*": ["packages/ui-kit/src/*"],
       "@neewsletter/block-schema": ["packages/block-schema/src/index.ts"],
       "@neewsletter/config/*": ["packages/config/*"]

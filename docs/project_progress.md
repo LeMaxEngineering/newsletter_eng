@@ -3,7 +3,7 @@
 | Phase | Target Duration | Status | Key Outputs | Notes / Next Actions |
 | --- | --- | --- | --- | --- |
 | 0. Discovery & Architecture | 3 weeks | Complete | Monorepo bootstrapped, API health endpoint live, PRD (`docs/prd.md`), UX wireframes (`docs/wireframes.md`), architecture overview (`docs/architecture.md`) | Kick off Phase 1 handoff: finalize stakeholder alignment, schedule Phase 1 sprint planning. |
-| 1. Core Editor & Auth | 6 weeks | Not started | React editor shell, block schema, Auth0 integration, RBAC | Bootstrap monorepo, scaffold web/app packages, define block JSON schema. |
+| 1. Core Editor & Auth | 6 weeks | In progress | React editor shell wired to shared UI kit, block schema package + catalog, user manual drafted, API dashboard + auth session wiring, RBAC guard + full project/template CRUD endpoints, SQLite-backed persistence with seeding, editor UI for block canvas + template management (create/update/delete + status), RBAC-aware nav/routes, API + web Vitest suites updated for DB layer | Next: Migrate from SQLite to managed Postgres, add E2E coverage, wire renderer tests + analytics milestones. |
 | 2. Rendering & Preview | 5 weeks | Not started | AMP/HTML renderer, preview service, template mgmt APIs | Prototype renderer pipeline, set up Redis caching, integrate preview in editor. |
 | 3. Engagement Pipeline & Analytics | 6 weeks | Not started | Ingestion service (NestJS + Kafka), warehouse models, analytics dashboard | Stand up Kafka topics, define event contracts, choose BI tool. |
 | 4. ESP Integrations & Personalization | 5 weeks | Not started | Mailchimp/Sendgrid connectors, personalization rules engine | Build OAuth credential vault, implement segment targeting, add SDK docs. |
