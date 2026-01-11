@@ -2,7 +2,7 @@
 
 | Phase | Target Duration | Status | Key Outputs | Notes / Next Actions |
 | --- | --- | --- | --- | --- |
-| 0. Discovery & Architecture | 3 weeks | Not started | PRD, UX wireframes, system diagrams, data model draft | Schedule stakeholder interviews, confirm design partners. |
+| 0. Discovery & Architecture | 3 weeks | Complete | Monorepo bootstrapped, API health endpoint live, PRD (`docs/prd.md`), UX wireframes (`docs/wireframes.md`), architecture overview (`docs/architecture.md`) | Kick off Phase 1 handoff: finalize stakeholder alignment, schedule Phase 1 sprint planning. |
 | 1. Core Editor & Auth | 6 weeks | Not started | React editor shell, block schema, Auth0 integration, RBAC | Bootstrap monorepo, scaffold web/app packages, define block JSON schema. |
 | 2. Rendering & Preview | 5 weeks | Not started | AMP/HTML renderer, preview service, template mgmt APIs | Prototype renderer pipeline, set up Redis caching, integrate preview in editor. |
 | 3. Engagement Pipeline & Analytics | 6 weeks | Not started | Ingestion service (NestJS + Kafka), warehouse models, analytics dashboard | Stand up Kafka topics, define event contracts, choose BI tool. |
